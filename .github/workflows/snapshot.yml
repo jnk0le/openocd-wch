@@ -75,7 +75,11 @@ jobs:
           # add missing dlls
           cd $HOST-root/usr
           cp `$HOST-gcc --print-file-name=libwinpthread-1.dll` ./bin/
-          cp `$HOST-gcc --print-file-name=libgcc_s_sjlj-1.dll` ./bin/
+          
+          # cp: cannot stat 'libgcc_s_sjlj-1.dll': No such file or directory
+          # cp `$HOST-gcc --print-file-name=libgcc_s_sjlj-1.dll` ./bin/
+          cp `$HOST-gcc --print-file-name=libgcc_s_dw2-1.dll` ./bin/
+
           # prepare the artifact
           ARTIFACT="openocd-${OPENOCD_TAG}-${HOST}.tar.gz"
           tar -czf $ARTIFACT *
