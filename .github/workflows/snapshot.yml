@@ -90,6 +90,6 @@ jobs:
       - name: do artifact
         uses: actions/upload-artifact@v2
         with:
-          name: "openocd-${OPENOCD_TAG}-${HOST}.tar.gz"
+          name: ${{ env.RELEASE_NAME }}
           path: ${{ env.ARTIFACT_PATH }}
           retention-days: 7
