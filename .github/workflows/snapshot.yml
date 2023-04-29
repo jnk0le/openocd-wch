@@ -91,5 +91,5 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           name: "openocd-${OPENOCD_TAG}-${HOST}.tar.gz"
-          path: "$PWD/$ARTIFACT"
+          path: ${{ env.ARTIFACT_PATH }}
           retention-days: 7
