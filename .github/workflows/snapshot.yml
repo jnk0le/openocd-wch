@@ -10,7 +10,7 @@ name: OpenOCD Snapshot
 
 jobs:
   package:
-    runs-on: [ubuntu-18.04]
+    runs-on: ubuntu-latest
     env:
       DL_DIR: ../downloads
       BUILD_DIR: ../build
