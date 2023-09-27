@@ -23,6 +23,7 @@
 #include "rtos/rtos.h"
 #include "debug_defines.h"
 #include <helper/bits.h>
+#include <rtt/rtt.h>
 
 extern bool wchwlink;
 
@@ -3404,6 +3405,9 @@ const struct command_registration riscv_command_handlers[] = {
 		.help = "ARM Command Group",
 		.usage = "",
 		.chain = semihosting_common_handlers
+	},
+	{
+		.chain = rtt_target_command_handlers
 	},
 	COMMAND_REGISTRATION_DONE
 };
