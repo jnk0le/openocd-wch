@@ -26,7 +26,7 @@
 
 #if HAVE_CAPSTONE
 
-#include <capstone.h>
+#include <capstone/capstone.h>
 
 static void print_opcode(struct command_invocation *cmd, const cs_insn *insn)
 {
