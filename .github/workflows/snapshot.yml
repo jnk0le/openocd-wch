@@ -42,7 +42,7 @@ jobs:
           echo "HIDAPI_SRC=$PWD" >> $GITHUB_ENV
       - name: Prepare capstone
         env:
-          CAPSTONE_VER: 4.0.2
+          CAPSTONE_VER: 5.0.1
         run: |
           mkdir -p $DL_DIR && cd $DL_DIR
           CAPSTONE_NAME=${CAPSTONE_VER}
