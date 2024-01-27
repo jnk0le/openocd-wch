@@ -2,9 +2,10 @@
 
 # Copyright (C) 2020 by Tarek BOUCHKATI <tarek.bouchkati@gmail.com>
 
-on: 
+on:
   pull_request:
   workflow_dispatch:
+  push:
 
 name: OpenOCD Snapshot
 
