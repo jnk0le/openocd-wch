@@ -182,10 +182,6 @@ endif
 if XDS110
 DRIVERFILES += %D%/xds110.c
 endif
-if WLINK
-DRIVERFILES += %D%/wlink.c
-endif
-
 
 DRIVERHEADERS = \
 	%D%/bitbang.h \
