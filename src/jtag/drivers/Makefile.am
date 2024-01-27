@@ -75,6 +75,9 @@ endif
 if JTAG_VPI
 DRIVERFILES += %D%/jtag_vpi.c
 endif
+if VDEBUG
+DRIVERFILES += %D%/vdebug.c
+endif
 if JTAG_DPI
 DRIVERFILES += %D%/jtag_dpi.c
 endif
@@ -182,6 +185,14 @@ endif
 if XDS110
 DRIVERFILES += %D%/xds110.c
 endif
+if WLINKE
+DRIVERFILES += %D%/wlinke.c
+endif
+if CH347
+DRIVERFILES += %D%/ch347.c
+endif
+
+
 
 DRIVERHEADERS = \
 	%D%/bitbang.h \

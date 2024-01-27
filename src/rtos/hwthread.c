@@ -23,6 +23,7 @@
 #include "target/target.h"
 #include "target/target_type.h"
 #include "target/register.h"
+#include <target/smp.h>
 #include "rtos.h"
 #include "helper/log.h"
 #include "helper/types.h"
@@ -43,6 +44,8 @@ static int hwthread_read_buffer(struct rtos *rtos, target_addr_t address,
 		uint32_t size, uint8_t *buffer);
 static int hwthread_write_buffer(struct rtos *rtos, target_addr_t address,
 		uint32_t size, const uint8_t *buffer);
+struct target *hwthread_swbp_target(struct rtos *rtos, target_addr_t address,
+				    uint32_t length, enum breakpoint_type type);
 
 #define HW_THREAD_NAME_STR_SIZE (32)
 
@@ -66,6 +69,7 @@ const struct rtos_type hwthread_rtos = {
 	.needs_fake_step = hwthread_needs_fake_step,
 	.read_buffer = hwthread_read_buffer,
 	.write_buffer = hwthread_write_buffer,
+	.swbp_target = hwthread_swbp_target
 };
 
 struct hwthread_params {
@@ -106,7 +110,7 @@ static int hwthread_update_threads(struct rtos *rtos)
 
 	/* determine the number of "threads" */
 	if (target->smp) {
-		for (head = target->head; head; head = head->next) {
+		foreach_smp_target(head, target->smp_targets) {
 			struct target *curr = head->target;
 
 			if (!target_was_examined(curr))
@@ -127,7 +131,7 @@ static int hwthread_update_threads(struct rtos *rtos)
 
 	if (target->smp) {
 		/* loop over all threads */
-		for (head = target->head; head; head = head->next) {
+		foreach_smp_target(head, target->smp_targets) {
 			struct target *curr = head->target;
 
 			if (!target_was_examined(curr))
@@ -222,7 +226,8 @@ static struct target *hwthread_find_thread(struct target *target, int64_t thread
 	if (!target)
 		return NULL;
 	if (target->smp) {
-		for (struct target_list *head = target->head; head; head = head->next) {
+		struct target_list *head;
+		foreach_smp_target(head, target->smp_targets) {
 			if (thread_id == threadid_from_target(head->target))
 				return head->target;
 		}
@@ -443,4 +448,10 @@ static int hwthread_write_buffer(struct rtos *rtos, target_addr_t address,
 		return ERROR_FAIL;
 
 	return target_write_buffer(curr, address, size, buffer);
+}
+
+struct target *hwthread_swbp_target(struct rtos *rtos, target_addr_t address,
+				    uint32_t length, enum breakpoint_type type)
+{
+	return hwthread_find_thread(rtos->target, rtos->current_thread);
 }

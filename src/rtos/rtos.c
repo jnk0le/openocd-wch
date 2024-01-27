@@ -22,6 +22,7 @@
 
 #include "rtos.h"
 #include "target/target.h"
+#include "target/smp.h"
 #include "helper/log.h"
 #include "helper/binarybuffer.h"
 #include "server/gdb_server.h"
@@ -97,7 +98,6 @@ static int os_alloc(struct target *target, struct rtos_type *ostype,
 
 	/* RTOS drivers can override the packet handler in _create(). */
 	os->gdb_thread_packet = rtos_thread_packet;
-	os->gdb_v_packet = NULL;
 	os->gdb_target_for_threadid = rtos_target_for_threadid;
 	os->cmd_ctx = cmd_ctx;
 
@@ -573,10 +573,9 @@ int rtos_get_gdb_reg_list(struct connection *connection)
 		struct rtos_reg *reg_list;
 		int num_regs;
 
-		LOG_DEBUG("RTOS: getting register list for thread 0x%" PRIx64
-				  ", target->rtos->current_thread=0x%" PRIx64 "\r\n",
-										current_threadid,
-										target->rtos->current_thread);
+		LOG_TARGET_DEBUG(target, "RTOS: getting register list for thread 0x%" PRIx64
+			  ", target->rtos->current_thread=0x%" PRIx64,
+			  current_threadid, target->rtos->current_thread);
 
 		int retval = target->rtos->type->get_thread_reg_list(target->rtos,
 				current_threadid,
@@ -789,10 +788,29 @@ static int rtos_try_next(struct target *target)
 	return 1;
 }
 
+struct rtos *rtos_of_target(struct target *target)
+{
+	/* Primarily consider the rtos field of the target itself, secondarily consider
+	 * rtos field SMP leader target, then consider rtos field of any other target in the SMP group.
+	 * Otherwise NULL return means that no associated non-zero rtos field could be found. */
+
+	struct target_list *pos;
+
+	if ((target->rtos) && (target->rtos->type))
+		return target->rtos;
+
+	foreach_smp_target(pos, target->smp_targets)
+		if ((pos->target->rtos) && (pos->target->rtos->type))
+			return pos->target->rtos;
+
+	return NULL;
+}
+
 int rtos_update_threads(struct target *target)
 {
-	if ((target->rtos) && (target->rtos->type))
-		target->rtos->type->update_threads(target->rtos);
+	struct rtos *rtos = rtos_of_target(target);
+	if (rtos)
+		rtos->type->update_threads(rtos);
 	return ERROR_OK;
 }
 
@@ -835,4 +853,12 @@ int rtos_write_buffer(struct target *target, target_addr_t address,
 	if (target->rtos->type->write_buffer)
 		return target->rtos->type->write_buffer(target->rtos, address, size, buffer);
 	return ERROR_NOT_IMPLEMENTED;
+}
+
+struct target *rtos_swbp_target(struct target *target, target_addr_t address,
+				uint32_t length, enum breakpoint_type type)
+{
+	if (target->rtos->type->swbp_target)
+		return target->rtos->type->swbp_target(target->rtos, address, length, type);
+	return target;
 }

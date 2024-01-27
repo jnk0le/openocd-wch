@@ -29,6 +29,8 @@ struct riscv_program;
 
 #define RISCV_NUM_MEM_ACCESS_METHODS  3
 
+#define RISCV_BATCH_ALLOC_SIZE 128
+
 extern struct target_type riscv011_target;
 extern struct target_type riscv013_target;
 
@@ -54,6 +56,13 @@ enum riscv_halt_reason {
 	RISCV_HALT_UNKNOWN,
 	RISCV_HALT_GROUP,
 	RISCV_HALT_ERROR
+};
+
+enum riscv_isrmasking_mode {
+	/* RISCV_ISRMASK_AUTO,	*/ /* not supported yet */
+	RISCV_ISRMASK_OFF,
+	/* RISCV_ISRMASK_ON,	*/ /* not supported yet */
+	RISCV_ISRMASK_STEPONLY,
 };
 
 typedef struct {
@@ -90,12 +99,6 @@ typedef struct {
 	struct command_context *cmd_ctx;
 	void *version_specific;
 
-	/* The hart that is currently being debugged.  Note that this is
-	 * different than the hartid that the RTOS is expected to use.  This
-	 * one will change all the time, it's more of a global argument to
-	 * every function than an actual */
-	int current_hartid;
-
 	/* Single buffer that contains all register names, instead of calling
 	 * malloc for each register. Needs to be freed when reg_list is freed. */
 	char *reg_names;
@@ -115,11 +118,12 @@ typedef struct {
 	 * target controls, while otherwise only a single hart is controlled. */
 	int trigger_unique_id[RISCV_MAX_HWBPS];
 
+	/* The unique id of the trigger that caused the most recent halt. If the
+	 * most recent halt was not caused by a trigger, then this is -1. */
+	uint32_t trigger_hit;
+
 	/* The number of entries in the debug buffer. */
 	int debug_buffer_size;
-
-	/* This avoids invalidating the register cache too often. */
-	bool registers_initialized;
 
 	/* This hart contains an implicit ebreak at the end of the program buffer. */
 	bool impebreak;
@@ -135,6 +139,8 @@ typedef struct {
 	/* This target was selected using hasel. */
 	bool selected;
 
+	enum riscv_isrmasking_mode isrmask_mode;
+
 	/* Helper functions that target the various RISC-V debug spec
 	 * implementations. */
 	int (*get_register)(struct target *target, riscv_reg_t *value, int regid);
@@ -142,7 +148,7 @@ typedef struct {
 	int (*get_register_buf)(struct target *target, uint8_t *buf, int regno);
 	int (*set_register_buf)(struct target *target, int regno,
 			const uint8_t *buf);
-	int (*select_current_hart)(struct target *target);
+	int (*select_target)(struct target *target);
 	bool (*is_halted)(struct target *target);
 	/* Resume this target, as well as every other prepped target that can be
 	 * resumed near-simultaneously. Clear the prepped flag on any target that
@@ -161,6 +167,7 @@ typedef struct {
 			riscv_insn_t d);
 	riscv_insn_t (*read_debug_buffer)(struct target *target, unsigned index);
 	int (*execute_debug_buffer)(struct target *target);
+	int (*invalidate_cached_debug_buffer)(struct target *target);
 	int (*dmi_write_u64_bits)(struct target *target);
 	void (*fill_dmi_write_u64)(struct target *target, char *buf, int a, uint64_t d);
 	void (*fill_dmi_read_u64)(struct target *target, char *buf, int a);
@@ -204,7 +211,7 @@ typedef struct {
 	struct reg_data_type_union vector_union;
 	struct reg_data_type type_vector;
 
-	/* Set when trigger registers are changed by the user. This indicates we eed
+	/* Set when trigger registers are changed by the user. This indicates we need
 	 * to beware that we may hit a trigger that we didn't realize had been set. */
 	bool manual_hwbp_set;
 
@@ -341,7 +348,7 @@ int riscv_current_hartid(const struct target *target);
 
 /* Lists the number of harts in the system, which are assumed to be
  * consecutive and start with mhartid=0. */
-int riscv_count_harts(struct target *target);
+unsigned int riscv_count_harts(struct target *target);
 
 /** Set register, updating the cache. */
 int riscv_set_register(struct target *target, enum gdb_regno i, riscv_reg_t v);
@@ -357,7 +364,7 @@ int riscv_flush_registers(struct target *target);
 /* Checks the state of the current hart -- "is_halted" checks the actual
  * on-device register. */
 bool riscv_is_halted(struct target *target);
-enum riscv_halt_reason riscv_halt_reason(struct target *target, int hartid);
+enum riscv_halt_reason riscv_halt_reason(struct target *target);
 
 /* These helper functions let the generic program interface get target-specific
  * information. */
@@ -401,5 +408,8 @@ void riscv_add_bscan_tunneled_scan(struct target *target, struct scan_field *fie
 
 int riscv_read_by_any_size(struct target *target, target_addr_t address, uint32_t size, uint8_t *buffer);
 int riscv_write_by_any_size(struct target *target, target_addr_t address, uint32_t size, uint8_t *buffer);
+
+int riscv_interrupts_disable(struct target *target, uint64_t ie_mask, uint64_t *old_mstatus);
+int riscv_interrupts_restore(struct target *target, uint64_t old_mstatus);
 
 #endif

@@ -56,6 +56,7 @@
 #include "rtos/rtos.h"
 #include "transport/transport.h"
 #include "arm_cti.h"
+#include "smp.h"
 
 /* default halt wait timeout (ms) */
 #define DEFAULT_HALT_TIMEOUT 5000
@@ -111,7 +112,7 @@ extern struct target_type riscv_target;
 extern struct target_type mem_ap_target;
 extern struct target_type esirisc_target;
 extern struct target_type arcv2_target;
-
+extern struct target_type wch_riscv_target;
 static struct target_type *target_types[] = {
 	&arm7tdmi_target,
 	&arm9tdmi_target,
@@ -149,6 +150,7 @@ static struct target_type *target_types[] = {
 	&arcv2_target,
 	&aarch64_target,
 	&mips_mips64_target,
+	&wch_riscv_target,
 	NULL,
 };
 
@@ -158,7 +160,8 @@ static struct target_timer_callback *target_timer_callbacks;
 static int64_t target_timer_next_event_value;
 static LIST_HEAD(target_reset_callback_list);
 static LIST_HEAD(target_trace_callback_list);
-static const int polling_interval = TARGET_DEFAULT_POLLING_INTERVAL;
+static const unsigned int polling_interval = TARGET_DEFAULT_POLLING_INTERVAL;
+static LIST_HEAD(empty_smp_targets);
 
 static const struct jim_nvp nvp_assert[] = {
 	{ .name = "assert", NVP_ASSERT },
@@ -235,6 +238,15 @@ static const struct jim_nvp nvp_target_event[] = {
 	{ .value = TARGET_EVENT_GDB_FLASH_ERASE_END,   .name = "gdb-flash-erase-end" },
 
 	{ .value = TARGET_EVENT_TRACE_CONFIG, .name = "trace-config" },
+
+	{ .value = TARGET_EVENT_SEMIHOSTING_USER_CMD_0x100, .name = "semihosting-user-cmd-0x100" },
+	{ .value = TARGET_EVENT_SEMIHOSTING_USER_CMD_0x101, .name = "semihosting-user-cmd-0x101" },
+	{ .value = TARGET_EVENT_SEMIHOSTING_USER_CMD_0x102, .name = "semihosting-user-cmd-0x102" },
+	{ .value = TARGET_EVENT_SEMIHOSTING_USER_CMD_0x103, .name = "semihosting-user-cmd-0x103" },
+	{ .value = TARGET_EVENT_SEMIHOSTING_USER_CMD_0x104, .name = "semihosting-user-cmd-0x104" },
+	{ .value = TARGET_EVENT_SEMIHOSTING_USER_CMD_0x105, .name = "semihosting-user-cmd-0x105" },
+	{ .value = TARGET_EVENT_SEMIHOSTING_USER_CMD_0x106, .name = "semihosting-user-cmd-0x106" },
+	{ .value = TARGET_EVENT_SEMIHOSTING_USER_CMD_0x107, .name = "semihosting-user-cmd-0x107" },
 
 	{ .name = NULL, .value = -1 }
 };
@@ -813,7 +825,7 @@ const char *target_type_name(struct target *target)
 	return target->type->name;
 }
 
-static int target_soft_reset_halt(struct target *target)
+ int target_soft_reset_halt(struct target *target)
 {
 	if (!target_was_examined(target)) {
 		LOG_ERROR("Target not examined yet");
@@ -852,7 +864,7 @@ int target_run_algorithm(struct target *target,
 		int timeout_ms, void *arch_info)
 {
 	int retval = ERROR_FAIL;
-
+	
 	if (!target_was_examined(target)) {
 		LOG_ERROR("Target not examined yet");
 		goto done;
@@ -862,7 +874,7 @@ int target_run_algorithm(struct target *target,
 				target_type_name(target), __func__);
 		goto done;
 	}
-
+	
 	target->running_alg = true;
 	retval = target->type->run_algorithm(target,
 			num_mem_params, mem_params,
@@ -1843,7 +1855,7 @@ int target_call_event_callbacks(struct target *target, enum target_event event)
 	}
 
 	LOG_DEBUG("target event %i (%s) for core %s", event,
-			jim_nvp_value2name_simple(nvp_target_event, event)->name,
+			target_event_name(event),
 			target_name(target));
 
 	target_handle_event(target, event);
@@ -2272,13 +2284,15 @@ static void target_destroy(struct target *target)
 
 	/* release the targets SMP list */
 	if (target->smp) {
-		struct target_list *head = target->head;
-		while (head) {
-			struct target_list *pos = head->next;
+		struct target_list *head, *tmp;
+
+		list_for_each_entry_safe(head, tmp, target->smp_targets, lh) {
+			list_del(&head->lh);
 			head->target->smp = 0;
 			free(head);
-			head = pos;
 		}
+		if (target->smp_targets != &empty_smp_targets)
+			free(target->smp_targets);
 		target->smp = 0;
 	}
 
@@ -3033,44 +3047,40 @@ static int handle_target(void *priv)
 			is_jtag_poll_safe() && target;
 			target = target->next) {
 
-		if (!target->tap->enabled)
+		/* This function only gets called every polling_interval, so
+		 * allow some slack in the time comparison. Otherwise, if we
+		 * schedule for now+polling_interval, the next poll won't
+		 * actually happen until a polling_interval later. */
+		bool poll_needed = timeval_ms() + polling_interval / 2 >= target->backoff.next_attempt;
+		if (!target->tap->enabled || power_dropout || srst_asserted || !poll_needed)
 			continue;
 
-		if (target->backoff.times > target->backoff.count) {
-			/* do not poll this time as we failed previously */
-			target->backoff.count++;
-			continue;
+		/* polling may fail silently until the target has been examined */
+		retval = target_poll(target);
+		if (retval == ERROR_OK) {
+			/* Polling succeeded, reset the back-off interval */
+			target->backoff.interval = polling_interval;
+		} else {
+			/* Increase interval between polling up to 5000ms */
+			target->backoff.interval = MAX(polling_interval,
+					MIN(target->backoff.interval * 2 + 1, 5000));
+			/* Tell GDB to halt the debugger. This allows the user to run
+			 * monitor commands to handle the situation. */
+			target_call_event_callbacks(target, TARGET_EVENT_GDB_HALT);
 		}
-		target->backoff.count = 0;
+		target->backoff.next_attempt = timeval_ms() + target->backoff.interval;
+		LOG_TARGET_DEBUG(target, "target_poll() -> %d, next attempt in %dms",
+				 retval, target->backoff.interval);
 
-		/* only poll target if we've got power and srst isn't asserted */
-		if (!power_dropout && !srst_asserted) {
-			/* polling may fail silently until the target has been examined */
-			retval = target_poll(target);
+		if (retval != ERROR_OK && examine_attempted) {
+			target_reset_examined(target);
+			retval = target_examine_one(target);
 			if (retval != ERROR_OK) {
-				/* 100ms polling interval. Increase interval between polling up to 5000ms */
-				if (target->backoff.times * polling_interval < 5000)
-					target->backoff.times = MIN(target->backoff.times * 2 + 1,
-												5000 / polling_interval);
-
-				/* Tell GDB to halt the debugger. This allows the user to
-				 * run monitor commands to handle the situation.
-				 */
-				target_call_event_callbacks(target, TARGET_EVENT_GDB_HALT);
+				LOG_TARGET_DEBUG(target, "Examination failed, GDB will be halted. "
+					"Polling again in %dms",
+					target->backoff.interval);
+				return retval;
 			}
-			if (target->backoff.times > 0 && examine_attempted) {
-				LOG_DEBUG("[%s] Polling failed, trying to reexamine", target_name(target));
-				target_reset_examined(target);
-				retval = target_examine_one(target);
-				if (retval != ERROR_OK) {
-					LOG_DEBUG("[%s] Examination failed, GDB will be halted. Polling again in %dms",
-						 target_name(target), target->backoff.times * polling_interval);
-					return retval;
-				}
-			}
-
-			/* Since we succeeded, we reset backoff count */
-			target->backoff.times = 0;
 		}
 	}
 
@@ -3087,13 +3097,12 @@ COMMAND_HANDLER(handle_reg_command)
 	/* list all available registers for the current target */
 	if (CMD_ARGC == 0) {
 		struct reg_cache *cache = target->reg_cache;
-
 		unsigned int count = 0;
 		while (cache) {
 			unsigned i;
 
 			command_print(CMD, "===== %s", cache->name);
-
+			
 			for (i = 0, reg = cache->reg_list;
 					i < cache->num_regs;
 					i++, reg++, count++) {
@@ -3346,7 +3355,12 @@ COMMAND_HANDLER(handle_reset_command)
 	/* reset *all* targets */
 	return target_process_reset(CMD, reset_mode);
 }
-
+extern void wlink_softreset(void);
+COMMAND_HANDLER(handle_wlink_reset_resume_command)
+{
+	
+	wlink_softreset();
+}
 
 COMMAND_HANDLER(handle_resume_command)
 {
@@ -3959,26 +3973,26 @@ static int handle_bp_command_list(struct command_invocation *cmd)
 		if (breakpoint->type == BKPT_SOFT) {
 			char *buf = buf_to_hex_str(breakpoint->orig_instr,
 					breakpoint->length);
-			command_print(cmd, "IVA breakpoint: " TARGET_ADDR_FMT ", 0x%x, %i, 0x%s",
+			command_print(cmd, "IVA breakpoint: " TARGET_ADDR_FMT ", 0x%x, 0x%s",
 					breakpoint->address,
 					breakpoint->length,
-					breakpoint->set, buf);
+					buf);
 			free(buf);
 		} else {
 			if ((breakpoint->address == 0) && (breakpoint->asid != 0))
-				command_print(cmd, "Context breakpoint: 0x%8.8" PRIx32 ", 0x%x, %i",
+				command_print(cmd, "Context breakpoint: 0x%8.8" PRIx32 ", 0x%x, %u",
 							breakpoint->asid,
-							breakpoint->length, breakpoint->set);
+							breakpoint->length, breakpoint->number);
 			else if ((breakpoint->address != 0) && (breakpoint->asid != 0)) {
-				command_print(cmd, "Hybrid breakpoint(IVA): " TARGET_ADDR_FMT ", 0x%x, %i",
+				command_print(cmd, "Hybrid breakpoint(IVA): " TARGET_ADDR_FMT ", 0x%x, %u",
 							breakpoint->address,
-							breakpoint->length, breakpoint->set);
+							breakpoint->length, breakpoint->number);
 				command_print(cmd, "\t|--->linked with ContextID: 0x%8.8" PRIx32,
 							breakpoint->asid);
 			} else
-				command_print(cmd, "Breakpoint(IVA): " TARGET_ADDR_FMT ", 0x%x, %i",
+				command_print(cmd, "Breakpoint(IVA): " TARGET_ADDR_FMT ", 0x%x, %u",
 							breakpoint->address,
-							breakpoint->length, breakpoint->set);
+							breakpoint->length, breakpoint->number);
 		}
 
 		breakpoint = breakpoint->next;
@@ -4395,6 +4409,7 @@ COMMAND_HANDLER(handle_profile_command)
 	return retval;
 }
 
+
 static int new_u64_array_element(Jim_Interp *interp, const char *varname, int idx, uint64_t val)
 {
 	char *namebuf;
@@ -4423,26 +4438,11 @@ static int new_u64_array_element(Jim_Interp *interp, const char *varname, int id
 	return result;
 }
 
-static int jim_mem2array(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
-{
-	struct command_context *context;
-	struct target *target;
-
-	context = current_command_context(interp);
-	assert(context);
-
-	target = get_current_target(context);
-	if (!target) {
-		LOG_ERROR("mem2array: no current target");
-		return JIM_ERR;
-	}
-
-	return target_mem2array(interp, target, argc - 1, argv + 1);
-}
-
 static int target_mem2array(Jim_Interp *interp, struct target *target, int argc, Jim_Obj *const *argv)
 {
 	int e;
+
+	LOG_WARNING("DEPRECATED! use 'read_memory' not 'mem2array'");
 
 	/* argv[0] = name of array to receive the data
 	 * argv[1] = desired element width in bits
@@ -4596,6 +4596,161 @@ static int target_mem2array(Jim_Interp *interp, struct target *target, int argc,
 	return e;
 }
 
+static int target_jim_read_memory(Jim_Interp *interp, int argc,
+		Jim_Obj * const *argv)
+{
+	/*
+	 * argv[1] = memory address
+	 * argv[2] = desired element width in bits
+	 * argv[3] = number of elements to read
+	 * argv[4] = optional "phys"
+	 */
+
+	if (argc < 4 || argc > 5) {
+		Jim_WrongNumArgs(interp, 1, argv, "address width count ['phys']");
+		return JIM_ERR;
+	}
+
+	/* Arg 1: Memory address. */
+	jim_wide wide_addr;
+	int e;
+	e = Jim_GetWide(interp, argv[1], &wide_addr);
+
+	if (e != JIM_OK)
+		return e;
+
+	target_addr_t addr = (target_addr_t)wide_addr;
+
+	/* Arg 2: Bit width of one element. */
+	long l;
+	e = Jim_GetLong(interp, argv[2], &l);
+
+	if (e != JIM_OK)
+		return e;
+
+	const unsigned int width_bits = l;
+
+	/* Arg 3: Number of elements to read. */
+	e = Jim_GetLong(interp, argv[3], &l);
+
+	if (e != JIM_OK)
+		return e;
+
+	size_t count = l;
+
+	/* Arg 4: Optional 'phys'. */
+	bool is_phys = false;
+
+	if (argc > 4) {
+		const char *phys = Jim_GetString(argv[4], NULL);
+
+		if (strcmp(phys, "phys")) {
+			Jim_SetResultFormatted(interp, "invalid argument '%s', must be 'phys'", phys);
+			return JIM_ERR;
+		}
+
+		is_phys = true;
+	}
+
+	switch (width_bits) {
+	case 8:
+	case 16:
+	case 32:
+	case 64:
+		break;
+	default:
+		Jim_SetResultString(interp, "invalid width, must be 8, 16, 32 or 64", -1);
+		return JIM_ERR;
+	}
+
+	const unsigned int width = width_bits / 8;
+
+	if ((addr + (count * width)) < addr) {
+		Jim_SetResultString(interp, "read_memory: addr + count wraps to zero", -1);
+		return JIM_ERR;
+	}
+
+	if (count > 65536) {
+		Jim_SetResultString(interp, "read_memory: too large read request, exeeds 64K elements", -1);
+		return JIM_ERR;
+	}
+
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx != NULL);
+	struct target *target = get_current_target(cmd_ctx);
+
+	const size_t buffersize = 4096;
+	uint8_t *buffer = malloc(buffersize);
+
+	if (!buffer) {
+		LOG_ERROR("Failed to allocate memory");
+		return JIM_ERR;
+	}
+
+	Jim_Obj *result_list = Jim_NewListObj(interp, NULL, 0);
+	Jim_IncrRefCount(result_list);
+
+	while (count > 0) {
+		const unsigned int max_chunk_len = buffersize / width;
+		const size_t chunk_len = MIN(count, max_chunk_len);
+
+		int retval;
+
+		if (is_phys)
+			retval = target_read_phys_memory(target, addr, width, chunk_len, buffer);
+		else
+			retval = target_read_memory(target, addr, width, chunk_len, buffer);
+
+		if (retval != ERROR_OK) {
+			LOG_ERROR("read_memory: read at " TARGET_ADDR_FMT " with width=%u and count=%zu failed",
+				addr, width_bits, chunk_len);
+			Jim_SetResultString(interp, "read_memory: failed to read memory", -1);
+			e = JIM_ERR;
+			break;
+		}
+
+		for (size_t i = 0; i < chunk_len ; i++) {
+			uint64_t v = 0;
+
+			switch (width) {
+			case 8:
+				v = target_buffer_get_u64(target, &buffer[i * width]);
+				break;
+			case 4:
+				v = target_buffer_get_u32(target, &buffer[i * width]);
+				break;
+			case 2:
+				v = target_buffer_get_u16(target, &buffer[i * width]);
+				break;
+			case 1:
+				v = buffer[i];
+				break;
+			}
+
+			char value_buf[11];
+			snprintf(value_buf, sizeof(value_buf), "0x%" PRIx64, v);
+
+			Jim_ListAppendElement(interp, result_list,
+				Jim_NewStringObj(interp, value_buf, -1));
+		}
+
+		count -= chunk_len;
+		addr += chunk_len * width;
+	}
+
+	free(buffer);
+
+	if (e != JIM_OK) {
+		Jim_DecrRefCount(interp, result_list);
+		return e;
+	}
+
+	Jim_SetResult(interp, result_list);
+	Jim_DecrRefCount(interp, result_list);
+
+	return JIM_OK;
+}
+
 static int get_u64_array_element(Jim_Interp *interp, const char *varname, size_t idx, uint64_t *val)
 {
 	char *namebuf = alloc_printf("%s(%zu)", varname, idx);
@@ -4621,27 +4776,12 @@ static int get_u64_array_element(Jim_Interp *interp, const char *varname, size_t
 	return result;
 }
 
-static int jim_array2mem(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
-{
-	struct command_context *context;
-	struct target *target;
-
-	context = current_command_context(interp);
-	assert(context);
-
-	target = get_current_target(context);
-	if (!target) {
-		LOG_ERROR("array2mem: no current target");
-		return JIM_ERR;
-	}
-
-	return target_array2mem(interp, target, argc-1, argv + 1);
-}
-
 static int target_array2mem(Jim_Interp *interp, struct target *target,
 		int argc, Jim_Obj *const *argv)
 {
 	int e;
+
+	LOG_WARNING("DEPRECATED! use 'write_memory' not 'array2mem'");
 
 	/* argv[0] = name of array from which to read the data
 	 * argv[1] = desired element width in bits
@@ -4806,6 +4946,144 @@ static int target_array2mem(Jim_Interp *interp, struct target *target,
 	return e;
 }
 
+static int target_jim_write_memory(Jim_Interp *interp, int argc,
+		Jim_Obj * const *argv)
+{
+	/*
+	 * argv[1] = memory address
+	 * argv[2] = desired element width in bits
+	 * argv[3] = list of data to write
+	 * argv[4] = optional "phys"
+	 */
+
+	if (argc < 4 || argc > 5) {
+		Jim_WrongNumArgs(interp, 1, argv, "address width data ['phys']");
+		return JIM_ERR;
+	}
+
+	/* Arg 1: Memory address. */
+	int e;
+	jim_wide wide_addr;
+	e = Jim_GetWide(interp, argv[1], &wide_addr);
+
+	if (e != JIM_OK)
+		return e;
+
+	target_addr_t addr = (target_addr_t)wide_addr;
+
+	/* Arg 2: Bit width of one element. */
+	long l;
+	e = Jim_GetLong(interp, argv[2], &l);
+
+	if (e != JIM_OK)
+		return e;
+
+	const unsigned int width_bits = l;
+	size_t count = Jim_ListLength(interp, argv[3]);
+
+	/* Arg 4: Optional 'phys'. */
+	bool is_phys = false;
+
+	if (argc > 4) {
+		const char *phys = Jim_GetString(argv[4], NULL);
+
+		if (strcmp(phys, "phys")) {
+			Jim_SetResultFormatted(interp, "invalid argument '%s', must be 'phys'", phys);
+			return JIM_ERR;
+		}
+
+		is_phys = true;
+	}
+
+	switch (width_bits) {
+	case 8:
+	case 16:
+	case 32:
+	case 64:
+		break;
+	default:
+		Jim_SetResultString(interp, "invalid width, must be 8, 16, 32 or 64", -1);
+		return JIM_ERR;
+	}
+
+	const unsigned int width = width_bits / 8;
+
+	if ((addr + (count * width)) < addr) {
+		Jim_SetResultString(interp, "write_memory: addr + len wraps to zero", -1);
+		return JIM_ERR;
+	}
+
+	if (count > 65536) {
+		Jim_SetResultString(interp, "write_memory: too large memory write request, exceeds 64K elements", -1);
+		return JIM_ERR;
+	}
+
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx != NULL);
+	struct target *target = get_current_target(cmd_ctx);
+
+	const size_t buffersize = 4096;
+	uint8_t *buffer = malloc(buffersize);
+
+	if (!buffer) {
+		LOG_ERROR("Failed to allocate memory");
+		return JIM_ERR;
+	}
+
+	size_t j = 0;
+
+	while (count > 0) {
+		const unsigned int max_chunk_len = buffersize / width;
+		const size_t chunk_len = MIN(count, max_chunk_len);
+
+		for (size_t i = 0; i < chunk_len; i++, j++) {
+			Jim_Obj *tmp = Jim_ListGetIndex(interp, argv[3], j);
+			jim_wide element_wide;
+			Jim_GetWide(interp, tmp, &element_wide);
+
+			const uint64_t v = element_wide;
+
+			switch (width) {
+			case 8:
+				target_buffer_set_u64(target, &buffer[i * width], v);
+				break;
+			case 4:
+				target_buffer_set_u32(target, &buffer[i * width], v);
+				break;
+			case 2:
+				target_buffer_set_u16(target, &buffer[i * width], v);
+				break;
+			case 1:
+				buffer[i] = v & 0x0ff;
+				break;
+			}
+		}
+
+		count -= chunk_len;
+
+		int retval;
+
+		if (is_phys)
+			retval = target_write_phys_memory(target, addr, width, chunk_len, buffer);
+		else
+			retval = target_write_memory(target, addr, width, chunk_len, buffer);
+
+		if (retval != ERROR_OK) {
+			LOG_ERROR("write_memory: write at " TARGET_ADDR_FMT " with width=%u and count=%zu failed",
+				addr,  width_bits, chunk_len);
+			Jim_SetResultString(interp, "write_memory: failed to write memory", -1);
+			e = JIM_ERR;
+			break;
+		}
+
+		addr += chunk_len * width;
+	}
+
+	free(buffer);
+
+	return e;
+}
+
 /* FIX? should we propagate errors here rather than printing them
  * and continuing?
  */
@@ -4821,7 +5099,7 @@ void target_handle_event(struct target *target, enum target_event e)
 					   target_name(target),
 					   target_type_name(target),
 					   e,
-					   jim_nvp_value2name_simple(nvp_target_event, e)->name,
+					   target_event_name(e),
 					   Jim_GetString(teap->body, NULL));
 
 			/* Override current target by the target an event
@@ -4845,7 +5123,7 @@ void target_handle_event(struct target *target, enum target_event e)
 			if (retval != JIM_OK) {
 				Jim_MakeErrorMessage(teap->interp);
 				LOG_USER("Error executing event %s on target %s:\n%s",
-						  jim_nvp_value2name_simple(nvp_target_event, e)->name,
+						  target_event_name(e),
 						  target_name(target),
 						  Jim_GetString(Jim_GetResult(teap->interp), NULL));
 				/* clean both error code and stacktrace before return */
@@ -4853,6 +5131,144 @@ void target_handle_event(struct target *target, enum target_event e)
 			}
 		}
 	}
+}
+
+static int target_jim_get_reg(Jim_Interp *interp, int argc,
+		Jim_Obj * const *argv)
+{
+	bool force = false;
+
+	if (argc == 3) {
+		const char *option = Jim_GetString(argv[1], NULL);
+
+		if (!strcmp(option, "-force")) {
+			argc--;
+			argv++;
+			force = true;
+		} else {
+			Jim_SetResultFormatted(interp, "invalid option '%s'", option);
+			return JIM_ERR;
+		}
+	}
+
+	if (argc != 2) {
+		Jim_WrongNumArgs(interp, 1, argv, "[-force] list");
+		return JIM_ERR;
+	}
+
+	const int length = Jim_ListLength(interp, argv[1]);
+
+	Jim_Obj *result_dict = Jim_NewDictObj(interp, NULL, 0);
+
+	if (!result_dict)
+		return JIM_ERR;
+
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx != NULL);
+	const struct target *target = get_current_target(cmd_ctx);
+
+	for (int i = 0; i < length; i++) {
+		Jim_Obj *elem = Jim_ListGetIndex(interp, argv[1], i);
+
+		if (!elem)
+			return JIM_ERR;
+
+		const char *reg_name = Jim_String(elem);
+
+		struct reg *reg = register_get_by_name(target->reg_cache, reg_name,
+			false);
+
+		if (!reg || !reg->exist) {
+			Jim_SetResultFormatted(interp, "unknown register '%s'", reg_name);
+			return JIM_ERR;
+		}
+
+		if (force) {
+			int retval = reg->type->get(reg);
+
+			if (retval != ERROR_OK) {
+				Jim_SetResultFormatted(interp, "failed to read register '%s'",
+					reg_name);
+				return JIM_ERR;
+			}
+		}
+
+		char *reg_value = buf_to_hex_str(reg->value, reg->size);
+
+		if (!reg_value) {
+			LOG_ERROR("Failed to allocate memory");
+			return JIM_ERR;
+		}
+
+		char *tmp = alloc_printf("0x%s", reg_value);
+
+		free(reg_value);
+
+		if (!tmp) {
+			LOG_ERROR("Failed to allocate memory");
+			return JIM_ERR;
+		}
+
+		Jim_DictAddElement(interp, result_dict, elem,
+			Jim_NewStringObj(interp, tmp, -1));
+
+		free(tmp);
+	}
+
+	Jim_SetResult(interp, result_dict);
+
+	return JIM_OK;
+}
+
+static int target_jim_set_reg(Jim_Interp *interp, int argc,
+		Jim_Obj * const *argv)
+{
+	if (argc != 2) {
+		Jim_WrongNumArgs(interp, 1, argv, "dict");
+		return JIM_ERR;
+	}
+
+	int tmp;
+	Jim_Obj **dict = Jim_DictPairs(interp, argv[1], &tmp);
+
+	if (!dict)
+		return JIM_ERR;
+
+	const unsigned int length = tmp;
+	struct command_context *cmd_ctx = current_command_context(interp);
+	assert(cmd_ctx);
+	const struct target *target = get_current_target(cmd_ctx);
+
+	for (unsigned int i = 0; i < length; i += 2) {
+		const char *reg_name = Jim_String(dict[i]);
+		const char *reg_value = Jim_String(dict[i + 1]);
+		struct reg *reg = register_get_by_name(target->reg_cache, reg_name,
+			false);
+
+		if (!reg || !reg->exist) {
+			Jim_SetResultFormatted(interp, "unknown register '%s'", reg_name);
+			return JIM_ERR;
+		}
+
+		uint8_t *buf = malloc(DIV_ROUND_UP(reg->size, 8));
+
+		if (!buf) {
+			LOG_ERROR("Failed to allocate memory");
+			return JIM_ERR;
+		}
+
+		str_to_buf(reg_value, strlen(reg_value), buf, reg->size, 0);
+		int retval = reg->type->set(reg, buf);
+		free(buf);
+
+		if (retval != ERROR_OK) {
+			Jim_SetResultFormatted(interp, "failed to set '%s' to register '%s'",
+				reg_value, reg_name);
+			return JIM_ERR;
+		}
+	}
+
+	return JIM_OK;
 }
 
 /**
@@ -5508,9 +5924,9 @@ COMMAND_HANDLER(handle_target_event_list)
 	command_print(CMD, "------------------------- | "
 			"----------------------------------------");
 	while (teap) {
-		struct jim_nvp *opt = jim_nvp_value2name_simple(nvp_target_event, teap->event);
 		command_print(CMD, "%-25s | %s",
-				opt->name, Jim_GetString(teap->body, NULL));
+				target_event_name(teap->event),
+				Jim_GetString(teap->body, NULL));
 		teap = teap->next;
 	}
 	command_print(CMD, "***END***");
@@ -5636,6 +6052,34 @@ static const struct command_registration target_instance_command_handlers[] = {
 		.help = "Loads Tcl array of 8/16/32 bit numbers "
 			"from target memory",
 		.usage = "arrayname bitwidth address count",
+	},
+	{
+		.name = "get_reg",
+		.mode = COMMAND_EXEC,
+		.jim_handler = target_jim_get_reg,
+		.help = "Get register values from the target",
+		.usage = "list",
+	},
+	{
+		.name = "set_reg",
+		.mode = COMMAND_EXEC,
+		.jim_handler = target_jim_set_reg,
+		.help = "Set target register values",
+		.usage = "dict",
+	},
+	{
+		.name = "read_memory",
+		.mode = COMMAND_EXEC,
+		.jim_handler = target_jim_read_memory,
+		.help = "Read Tcl list of 8/16/32/64 bit numbers from target memory",
+		.usage = "address width count ['phys']",
+	},
+	{
+		.name = "write_memory",
+		.mode = COMMAND_EXEC,
+		.jim_handler = target_jim_write_memory,
+		.help = "Write Tcl list of 8/16/32/64 bit numbers to target memory",
+		.usage = "address width data ['phys']",
 	},
 	{
 		.name = "eventlist",
@@ -5781,6 +6225,9 @@ static int target_create(struct jim_getopt_info *goi)
 		LOG_ERROR("Out of memory");
 		return JIM_ERR;
 	}
+
+	/* set empty smp cluster */
+	target->smp_targets = &empty_smp_targets;
 
 	/* set target number */
 	target->target_number = new_target_number();
@@ -5995,9 +6442,7 @@ static int jim_target_smp(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 	int retval, len;
 	static int smp_group = 1;
 	struct target *target = NULL;
-	struct target_list *head, *curr, *new;
-	curr = NULL;
-	head = NULL;
+	struct target_list *head, *new;
 
 	retval = 0;
 	LOG_DEBUG("%d", argc);
@@ -6005,6 +6450,13 @@ static int jim_target_smp(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 	 * argv[2] = target to associate in smp
 	 * argv[3] ...
 	 */
+
+	struct list_head *lh = malloc(sizeof(*lh));
+	if (!lh) {
+		LOG_ERROR("Out of memory");
+		return JIM_ERR;
+	}
+	INIT_LIST_HEAD(lh);
 
 	for (i = 1; i < argc; i++) {
 
@@ -6014,24 +6466,14 @@ static int jim_target_smp(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 		if (target) {
 			new = malloc(sizeof(struct target_list));
 			new->target = target;
-			new->next = NULL;
-			if (!head) {
-				head = new;
-				curr = head;
-			} else {
-				curr->next = new;
-				curr = new;
-			}
+			list_add_tail(&new->lh, lh);
 		}
 	}
 	/*  now parse the list of cpu and put the target in smp mode*/
-	curr = head;
-
-	while (curr) {
-		target = curr->target;
+	foreach_smp_target(head, lh) {
+		target = head->target;
 		target->smp = smp_group;
-		target->head = head;
-		curr = curr->next;
+		target->smp_targets = lh;
 	}
 	smp_group++;
 
@@ -6579,6 +7021,14 @@ static const struct command_registration target_exec_command_handlers[] = {
 			"Default reset mode is run, if not given.",
 	},
 	{
+		.name = "wlink_reset_resume",
+		.handler = handle_wlink_reset_resume_command,
+		.mode = COMMAND_EXEC,
+		.usage = "",
+		.help = "Reset && resume. ",
+	},
+
+	{
 		.name = "soft_reset_halt",
 		.handler = handle_soft_reset_halt_command,
 		.mode = COMMAND_EXEC,
@@ -6708,20 +7158,32 @@ static const struct command_registration target_exec_command_handlers[] = {
 		.usage = "filename [offset [type]]",
 	},
 	{
-		.name = "mem2array",
+		.name = "get_reg",
 		.mode = COMMAND_EXEC,
-		.jim_handler = jim_mem2array,
-		.help = "read 8/16/32 bit memory and return as a TCL array "
-			"for script processing",
-		.usage = "arrayname bitwidth address count",
+		.jim_handler = target_jim_get_reg,
+		.help = "Get register values from the target",
+		.usage = "list",
 	},
 	{
-		.name = "array2mem",
+		.name = "set_reg",
 		.mode = COMMAND_EXEC,
-		.jim_handler = jim_array2mem,
-		.help = "convert a TCL array to memory locations "
-			"and write the 8/16/32 bit values",
-		.usage = "arrayname bitwidth address count",
+		.jim_handler = target_jim_set_reg,
+		.help = "Set target register values",
+		.usage = "dict",
+	},
+	{
+		.name = "read_memory",
+		.mode = COMMAND_EXEC,
+		.jim_handler = target_jim_read_memory,
+		.help = "Read Tcl list of 8/16/32/64 bit numbers from target memory",
+		.usage = "address width count ['phys']",
+	},
+	{
+		.name = "write_memory",
+		.mode = COMMAND_EXEC,
+		.jim_handler = target_jim_write_memory,
+		.help = "Write Tcl list of 8/16/32/64 bit numbers to target memory",
+		.usage = "address width data ['phys']",
 	},
 	{
 		.name = "reset_nag",

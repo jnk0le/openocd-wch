@@ -20,6 +20,7 @@
 #define OPENOCD_RTOS_RTOS_H
 
 #include "server/server.h"
+#include "target/breakpoints.h"
 #include "target/target.h"
 #include <helper/jim-nvp.h>
 
@@ -57,7 +58,6 @@ struct rtos {
 	struct thread_detail *thread_details;
 	int thread_count;
 	int (*gdb_thread_packet)(struct connection *connection, char const *packet, int packet_size);
-	int (*gdb_v_packet)(struct connection *connection, char const *packet, int packet_size);
 	int (*gdb_target_for_threadid)(struct connection *connection, threadid_t thread_id, struct target **p_target);
 	void *rtos_specific_params;
 	/* Populated in rtos.c, so that individual RTOSes can register commands. */
@@ -103,6 +103,12 @@ struct rtos_type {
 			uint8_t *buffer);
 	int (*write_buffer)(struct rtos *rtos, target_addr_t address, uint32_t size,
 			const uint8_t *buffer);
+	/* When a software breakpoint is set, it is set on only one target,
+	 * because we assume memory is shared across them. By default this is the
+	 * first target in the SMP group. Override this function to have
+	 * breakpoint_add() use a different target. */
+	struct target * (*swbp_target)(struct rtos *rtos, target_addr_t address,
+				     uint32_t length, enum breakpoint_type type);
 };
 
 struct stack_register_offset {
@@ -166,5 +172,8 @@ int rtos_read_buffer(struct target *target, target_addr_t address,
 		uint32_t size, uint8_t *buffer);
 int rtos_write_buffer(struct target *target, target_addr_t address,
 		uint32_t size, const uint8_t *buffer);
+struct target *rtos_swbp_target(struct target *target, target_addr_t address,
+				uint32_t length, enum breakpoint_type type);
+struct rtos *rtos_of_target(struct target *target);
 
 #endif /* OPENOCD_RTOS_RTOS_H */

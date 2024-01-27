@@ -57,6 +57,9 @@ extern struct adapter_driver usb_blaster_adapter_driver;
 #if BUILD_JTAG_VPI == 1
 extern struct adapter_driver jtag_vpi_adapter_driver;
 #endif
+#if BUILD_VDEBUG == 1
+extern struct adapter_driver vdebug_adapter_driver;
+#endif
 #if BUILD_JTAG_DPI == 1
 extern struct adapter_driver jtag_dpi_adapter_driver;
 #endif
@@ -147,6 +150,12 @@ extern struct adapter_driver stlink_dap_adapter_driver;
 #if BUILD_RSHIM == 1
 extern struct adapter_driver rshim_dap_adapter_driver;
 #endif
+#if BUILD_WLINKE == 1
+extern struct adapter_driver wlinke_adapter_driver;
+#endif
+#if BUILD_CH347 == 1
+extern struct adapter_driver ch347_adapter_driver;
+#endif
 
 /**
  * The list of built-in JTAG interfaces, containing entries for those
@@ -167,6 +176,9 @@ struct adapter_driver *adapter_drivers[] = {
 #endif
 #if BUILD_JTAG_VPI == 1
 		&jtag_vpi_adapter_driver,
+#endif
+#if BUILD_VDEBUG == 1
+		&vdebug_adapter_driver,
 #endif
 #if BUILD_JTAG_DPI == 1
 		&jtag_dpi_adapter_driver,
@@ -258,5 +270,12 @@ struct adapter_driver *adapter_drivers[] = {
 #if BUILD_RSHIM == 1
 		&rshim_dap_adapter_driver,
 #endif
+#if BUILD_WLINKE == 1
+		&wlinke_adapter_driver,
+#endif
+#if BUILD_CH347 == 1
+		&ch347_adapter_driver,
+#endif
+
 		NULL,
 	};

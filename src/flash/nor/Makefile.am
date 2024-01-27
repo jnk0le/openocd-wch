@@ -66,7 +66,6 @@ NOR_DRIVERS = \
 	%D%/stm32lx.c \
 	%D%/stm32l4x.c \
 	%D%/stm32h7x.c \
-	%D%/gd32vf103.c \
 	%D%/str7x.c \
 	%D%/str9x.c \
 	%D%/str9xpec.c \
@@ -76,6 +75,8 @@ NOR_DRIVERS = \
 	%D%/w600.c \
 	%D%/xcf.c \
 	%D%/xmc1xxx.c \
+	%D%/wchriscv.c \
+	%D%/wcharm.c \
 	%D%/xmc4xxx.c
 
 NORHEADERS = \

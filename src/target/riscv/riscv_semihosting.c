@@ -140,7 +140,9 @@ semihosting_result_t riscv_semihosting(struct target *target, int *retval)
 		semihosting->word_size_bytes = riscv_xlen(target) / 8;
 
 		/* Check for ARM operation numbers. */
-		if (semihosting->op >= 0 && semihosting->op <= 0x31) {
+		if ((semihosting->op >= 0 && semihosting->op <= 0x31) ||
+			(semihosting->op >= 0x100 && semihosting->op <= 0x107)) {
+
 			*retval = semihosting_common(target);
 			if (*retval != ERROR_OK) {
 				LOG_ERROR("Failed semihosting operation (0x%02X)", semihosting->op);
@@ -153,16 +155,16 @@ semihosting_result_t riscv_semihosting(struct target *target, int *retval)
 		}
 	}
 
+	/* Resume right after the EBREAK 4 bytes instruction. */
+	*retval = riscv_set_register(target, GDB_REGNO_PC, pc + 4);
+	if (*retval != ERROR_OK)
+		return SEMI_ERROR;
+
 	/*
 	 * Resume target if we are not waiting on a fileio
 	 * operation to complete.
 	 */
 	if (semihosting->is_resumable && !semihosting->hit_fileio) {
-		/* Resume right after the EBREAK 4 bytes instruction. */
-		*retval = riscv_set_register(target, GDB_REGNO_PC, pc + 4);
-		if (*retval != ERROR_OK)
-			return SEMI_ERROR;
-
 		LOG_DEBUG("   -> HANDLED");
 		return SEMI_HANDLED;
 	}

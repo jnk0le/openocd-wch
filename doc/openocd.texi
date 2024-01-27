@@ -588,6 +588,12 @@ produced, PDF schematics are easily found and it is easy to make.
 @* A JTAG driver acting as a client for the JTAG VPI server interface.
 @* Link: @url{http://github.com/fjullien/jtag_vpi}
 
+@item @b{vdebug}
+@* A driver for Cadence virtual Debug Interface to emulated or simulated targets.
+It implements a client connecting to the vdebug server, which in turn communicates
+with the emulated or simulated RTL model through a transactor. The current version
+supports only JTAG as a transport, but other virtual transports, like DAP are planned.
+
 @item @b{jtag_dpi}
 @* A JTAG driver acting as a client for the SystemVerilog Direct Programming
 Interface (DPI) for JTAG devices. DPI allows OpenOCD to connect to the JTAG
@@ -2009,9 +2015,9 @@ proc setc15 @{regs value@} @{
 
     echo [format "set p15 0x%04x, 0x%08x" $regs $value]
 
-    arm mcr 15 [expr ($regs>>12)&0x7] \
-        [expr ($regs>>0)&0xf] [expr ($regs>>4)&0xf] \
-        [expr ($regs>>8)&0x7] $value
+    arm mcr 15 [expr @{($regs >> 12) & 0x7@}] \
+        [expr @{($regs >> 0) & 0xf@}] [expr @{($regs >> 4) & 0xf@}] \
+        [expr @{($regs >> 8) & 0x7@}] $value
 @}
 @end example
 
@@ -2574,6 +2580,35 @@ and low FTDI GPIO registers. The values should be selected based on the
 schematics of the adapter, such that all signals are set to safe levels with
 minimal impact on the target system. Avoid floating inputs, conflicting outputs
 and initially asserted reset signals.
+@end deffn
+
+@deffn {Command} {ftdi oscan1_mode} on|off
+Enable or disable OScan1 mode. This mode is intended for use with an adapter,
+such as the ARM-JTAG-SWD by Olimex, that sits in between the FTDI chip and the
+target. The cJTAG prococol is composed of two wires: TCKC (clock) and TMSC (data).
+TMSC is a bidirectional signal which is time-multiplexed alternating TDI, TMS and
+TDO. The multiplexing is achieved by a tri-state buffer which puts TMSC in Hi-Z
+when the device is supposed to take the control of the line (TDO phase).
+
+The ARM-JTAG-SWD adapter uses standard TRST and TMS signals to control TMSC
+direction. TRST is used by the adapter as selector for the multiplexers which set
+the JTAG probe in 2-wire mode. Whatever signal is used for this purpose, it must
+be defined with the name JTAG_SEL using @command{ftdi layout_signal}. JTAG_SEL is
+set to 0 during OScan1 initialization.
+
+Some JTAG probes like the Digilent JTAG-HS2, support cJTAG by using a
+separate pin to control when TMS is driven onto TMSC. You can use such
+probes by defining the signal TMSC_EN using
+@command{ftdi layout_signal TMSC_EN -data <mask>}.
+@end deffn
+
+@deffn {Command} {ftdi jscan3_mode} on|off
+Enable or disable JScan3 mode. This mode uses the classic 4-wire JTAG protocol
+in chips whose JTAG port is only compliant with the cJTAG standard (IEEE 1149.7).
+
+Since cJTAG needs a 2-wire escape sequence to select the operating mode,
+a cJTAG adapter like ARM-JTAG-SWD by Olimex is still required. This means
+that a cJTAG probe configuration script must be used too.
 @end deffn
 
 @deffn {Command} {ftdi layout_signal} name [@option{-data}|@option{-ndata} data_mask] [@option{-input}|@option{-ninput} input_mask] [@option{-oe}|@option{-noe} oe_mask] [@option{-alias}|@option{-nalias} name]
@@ -3157,7 +3192,9 @@ the target's supply voltage.
 The result can be converted to Volts (ignoring the most significant bytes, always zero)
 @example
 > set a [st-link cmd 8 0xf7 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0]
-> echo [expr 2*1.2*([lindex $a 4]+256*[lindex $a 5])/([lindex $a 0]+256*[lindex $a 1])]
+> set n [expr @{[lindex $a 4] + 256 * [lindex $a 5]@}]
+> set d [expr @{[lindex $a 0] + 256 * [lindex $a 1]@}]
+> echo [expr @{2 * 1.2 * $n / $d@}]
 3.24891518738
 @end example
 @end deffn
@@ -3342,6 +3379,41 @@ This value is only used with the standard variant.
 @end deffn
 @end deffn
 
+
+@deffn {Interface Driver} {vdebug}
+Cadence Virtual Debug Interface driver.
+
+@deffn {Config Command} {vdebug server} host:port
+Specifies the host and TCP port number where the vdebug server runs.
+@end deffn
+
+@deffn {Config Command} {vdebug batching} value
+Specifies the batching method for the vdebug request. Possible values are
+0 for no batching
+1 or wr to batch write transactions together (default)
+2 or rw to batch both read and write transactions
+@end deffn
+
+@deffn {Config Command} {vdebug polling} min max
+Takes two values, representing the polling interval in ms. Lower values mean faster
+debugger responsiveness, but lower emulation performance. The minimum should be
+around 10, maximum should not exceed 1000, which is the default gdb and keepalive
+timeout value.
+@end deffn
+
+@deffn {Config Command} {vdebug bfm_path} path clk_period
+Specifies the hierarchical path and input clk period of the vdebug BFM in the design.
+The hierarchical path uses Verilog notation top.inst.inst
+The clock period must include the unit, for instance 40ns.
+@end deffn
+
+@deffn {Config Command} {vdebug mem_path} path base size
+Specifies the hierarchical path to the design memory instance for backdoor access.
+Up to 4 memories can be specified. The hierarchical path uses Verilog notation.
+The base specifies start address in the design address space, size its size in bytes.
+Both values can use hexadecimal notation with prefix 0x.
+@end deffn
+@end deffn
 
 @deffn {Interface Driver} {jtag_dpi}
 SystemVerilog Direct Programming Interface (DPI) compatible driver for
@@ -4151,6 +4223,10 @@ option. When vendors put out multiple versions of a chip, or use the same
 JTAG-level ID for several largely-compatible chips, it may be more practical
 to ignore the version field than to update config files to handle all of
 the various chip IDs. The version field is defined as bit 28-31 of the IDCODE.
+@item @code{-ignore-bypass}
+@*Specify this to ignore the 'bypass' bit of the idcode. Some vendor put
+an invalid idcode regarding this bit. Specify this to ignore this bit and
+to not consider this tap in bypass mode.
 @item @code{-ircapture} @var{NUMBER}
 @*The bit pattern loaded by the TAP into the JTAG shift register
 on entry to the @sc{ircapture} state, such as 0x01.
@@ -4523,13 +4599,13 @@ where the mask bit is 1. The following example sets HPROT3 (cacheable)
 and leaves the rest of the pattern intact. It configures memory access through
 DCache on Cortex-M7.
 @example
-set CSW_HPROT3_CACHEABLE [expr 1 << 27]
+set CSW_HPROT3_CACHEABLE [expr @{1 << 27@}]
 samv.dap apcsw $CSW_HPROT3_CACHEABLE $CSW_HPROT3_CACHEABLE
 @end example
 
 Another example clears SPROT bit and leaves the rest of pattern intact:
 @example
-set CSW_SPROT [expr 1 << 30]
+set CSW_SPROT [expr @{1 << 30@}]
 samv.dap apcsw 0 $CSW_SPROT
 @end example
 
@@ -4667,6 +4743,8 @@ compact Thumb2 instruction set. Supports also ARMv6-M and ARMv8-M cores
 @item @code{dsp5680xx} -- implements Freescale's 5680x DSP.
 @item @code{esirisc} -- this is an EnSilica eSi-RISC core.
 The current implementation supports eSi-32xx cores.
+@item @code{esp32c2} -- this is an Espressif SoC with single RISC-V core.
+@item @code{esp32c3} -- this is an Espressif SoC with single RISC-V core.
 @item @code{fa526} -- resembles arm920 (w/o Thumb).
 @item @code{feroceon} -- resembles arm926.
 @item @code{hla_target} -- a Cortex-M alternative to work with HL adapters like ST-Link.
@@ -4681,9 +4759,9 @@ specified, @xref{gdbportoverride,,option -gdb-port}.), and a fake ARM core will
 be emulated to comply to GDB remote protocol.
 @item @code{mips_m4k} -- a MIPS core.
 @item @code{mips_mips64} -- a MIPS64 core.
-@item @code{nds32_v2} -- this is an Andes NDS32 v2 core.
-@item @code{nds32_v3} -- this is an Andes NDS32 v3 core.
-@item @code{nds32_v3m} -- this is an Andes NDS32 v3m core.
+@item @code{nds32_v2} -- this is an Andes NDS32 v2 core (deprecated; would be removed in v0.13.0).
+@item @code{nds32_v3} -- this is an Andes NDS32 v3 core (deprecated; would be removed in v0.13.0).
+@item @code{nds32_v3m} -- this is an Andes NDS32 v3m core (deprecated; would be removed in v0.13.0).
 @item @code{or1k} -- this is an OpenRISC 1000 core.
 The current implementation supports three JTAG TAP cores:
 @itemize @minus
@@ -4933,27 +5011,76 @@ use these to deal with specific reset cases.
 They are not otherwise documented here.
 @end deffn
 
-@deffn {Command} {$target_name array2mem} arrayname width address count
-@deffnx {Command} {$target_name mem2array} arrayname width address count
-These provide an efficient script-oriented interface to memory.
-The @code{array2mem} primitive writes bytes, halfwords, words
-or double-words; while @code{mem2array} reads them.
-In both cases, the TCL side uses an array, and
-the target side uses raw memory.
-
-The efficiency comes from enabling the use of
-bulk JTAG data transfer operations.
-The script orientation comes from working with data
-values that are packaged for use by TCL scripts;
-@command{mdw} type primitives only print data they retrieve,
-and neither store nor return those values.
+@deffn {Command} {$target_name set_reg} dict
+Set register values of the target.
 
 @itemize
-@item @var{arrayname} ... is the name of an array variable
-@item @var{width} ... is 8/16/32/64 - indicating the memory access size
-@item @var{address} ... is the target memory address
-@item @var{count} ... is the number of elements to process
+@item @var{dict} ... Tcl dictionary with pairs of register names and values.
 @end itemize
+
+For example, the following command sets the value 0 to the program counter (pc)
+register and 0x1000 to the stack pointer (sp) register:
+
+@example
+set_reg @{pc 0 sp 0x1000@}
+@end example
+@end deffn
+
+@deffn {Command} {$target_name get_reg} [-force] list
+Get register values from the target and return them as Tcl dictionary with pairs
+of register names and values.
+If option "-force" is set, the register values are read directly from the
+target, bypassing any caching.
+
+@itemize
+@item @var{list} ... List of register names
+@end itemize
+
+For example, the following command retrieves the values from the program
+counter (pc) and stack pointer (sp) register:
+
+@example
+get_reg @{pc sp@}
+@end example
+@end deffn
+
+@deffn {Command} {$target_name write_memory} address width data ['phys']
+This function provides an efficient way to write to the target memory from a Tcl
+script.
+
+@itemize
+@item @var{address} ... target memory address
+@item @var{width} ... memory access bit size, can be 8, 16, 32 or 64
+@item @var{data} ... Tcl list with the elements to write
+@item ['phys'] ... treat the memory address as physical instead of virtual address
+@end itemize
+
+For example, the following command writes two 32 bit words into the target
+memory at address 0x20000000:
+
+@example
+write_memory 0x20000000 32 @{0xdeadbeef 0x00230500@}
+@end example
+@end deffn
+
+@deffn {Command} {$target_name read_memory} address width count ['phys']
+This function provides an efficient way to read the target memory from a Tcl
+script.
+A Tcl list containing the requested memory elements is returned by this function.
+
+@itemize
+@item @var{address} ... target memory address
+@item @var{width} ... memory access bit size, can be 8, 16, 32 or 64
+@item @var{count} ... number of elements to read
+@item ['phys'] ... treat the memory address as physical instead of virtual address
+@end itemize
+
+For example, the following command reads two 32 bit words from the target
+memory at address 0x20000000:
+
+@example
+read_memory 0x20000000 32 2
+@end example
 @end deffn
 
 @deffn {Command} {$target_name cget} queryparm
@@ -5023,8 +5150,8 @@ When the current target has an MMU which is present and active,
 Otherwise, or if the optional @var{phys} flag is specified,
 @var{addr} is interpreted as a physical address.
 If @var{count} is specified, displays that many units.
-(If you want to manipulate the data instead of displaying it,
-see the @code{mem2array} primitives.)
+(If you want to process the data instead of displaying it,
+see the @code{read_memory} primitives.)
 @end deffn
 
 @deffn {Command} {$target_name mwd} [phys] addr doubleword [count]
@@ -5179,6 +5306,22 @@ when reset disables PLLs needed to use a fast clock.
 @* After single-step has completed
 @item @b{trace-config}
 @* After target hardware trace configuration was changed
+@item @b{semihosting-user-cmd-0x100}
+@* The target made a semihosting call with user-defined operation number 0x100
+@item @b{semihosting-user-cmd-0x101}
+@* The target made a semihosting call with user-defined operation number 0x101
+@item @b{semihosting-user-cmd-0x102}
+@* The target made a semihosting call with user-defined operation number 0x102
+@item @b{semihosting-user-cmd-0x103}
+@* The target made a semihosting call with user-defined operation number 0x103
+@item @b{semihosting-user-cmd-0x104}
+@* The target made a semihosting call with user-defined operation number 0x104
+@item @b{semihosting-user-cmd-0x105}
+@* The target made a semihosting call with user-defined operation number 0x105
+@item @b{semihosting-user-cmd-0x106}
+@* The target made a semihosting call with user-defined operation number 0x106
+@item @b{semihosting-user-cmd-0x107}
+@* The target made a semihosting call with user-defined operation number 0x107
 @end itemize
 
 @quotation Note
@@ -6351,13 +6494,22 @@ flash bank $_FLASHNAME cc3220sf 0 0 0 0 $_TARGETNAME
 @end deffn
 
 @deffn {Flash Driver} {efm32}
-All members of the EFM32 microcontroller family from Energy Micro include
-internal flash and use ARM Cortex-M3 cores. The driver automatically recognizes
-a number of these chips using the chip identification register, and
+All members of the EFM32/EFR32 microcontroller family from Energy Micro (now Silicon Labs)
+include internal flash and use Arm Cortex-M3 or Cortex-M4 cores. The driver automatically
+recognizes a number of these chips using the chip identification register, and
 autoconfigures itself.
 @example
 flash bank $_FLASHNAME efm32 0 0 0 0 $_TARGETNAME
 @end example
+It supports writing to the user data page, as well as the portion of the lockbits page
+past 512 bytes on chips with larger page sizes. The latter is used by the SiLabs
+bootloader/AppLoader system for encryption keys. Setting protection on these pages is
+currently not supported.
+@example
+flash bank userdata.flash efm32 0x0FE00000 0 0 0 $_TARGETNAME
+flash bank lockbits.flash efm32 0x0FE04000 0 0 0 $_TARGETNAME
+@end example
+
 A special feature of efm32 controllers is that it is possible to completely disable the
 debug interface by writing the correct values to the 'Debug Lock Word'. OpenOCD supports
 this via the following command:
@@ -7172,6 +7324,7 @@ applied to all of them.
 All members of the STM32F0, STM32F1 and STM32F3 microcontroller families
 from STMicroelectronics and all members of the GD32F1x0, GD32F3x0 and GD32E23x microcontroller
 families from GigaDevice include internal flash and use ARM Cortex-M0/M3/M4/M23 cores.
+The driver also works with GD32VF103 powered by RISC-V core.
 The driver automatically recognizes a number of these chips using
 the chip identification register, and autoconfigures itself.
 
@@ -8419,6 +8572,78 @@ Debug and trace infrastructure:
 @end example
 @end deffn
 
+@deffn {Command} {set_reg} dict
+Set register values of the target.
+
+@itemize
+@item @var{dict} ... Tcl dictionary with pairs of register names and values.
+@end itemize
+
+For example, the following command sets the value 0 to the program counter (pc)
+register and 0x1000 to the stack pointer (sp) register:
+
+@example
+set_reg @{pc 0 sp 0x1000@}
+@end example
+@end deffn
+
+@deffn {Command} {get_reg} [-force] list
+Get register values from the target and return them as Tcl dictionary with pairs
+of register names and values.
+If option "-force" is set, the register values are read directly from the
+target, bypassing any caching.
+
+@itemize
+@item @var{list} ... List of register names
+@end itemize
+
+For example, the following command retrieves the values from the program
+counter (pc) and stack pointer (sp) register:
+
+@example
+get_reg @{pc sp@}
+@end example
+@end deffn
+
+@deffn {Command} {write_memory} address width data ['phys']
+This function provides an efficient way to write to the target memory from a Tcl
+script.
+
+@itemize
+@item @var{address} ... target memory address
+@item @var{width} ... memory access bit size, can be 8, 16, 32 or 64
+@item @var{data} ... Tcl list with the elements to write
+@item ['phys'] ... treat the memory address as physical instead of virtual address
+@end itemize
+
+For example, the following command writes two 32 bit words into the target
+memory at address 0x20000000:
+
+@example
+write_memory 0x20000000 32 @{0xdeadbeef 0x00230500@}
+@end example
+@end deffn
+
+@deffn {Command} {read_memory} address width count ['phys']
+This function provides an efficient way to read the target memory from a Tcl
+script.
+A Tcl list containing the requested memory elements is returned by this function.
+
+@itemize
+@item @var{address} ... target memory address
+@item @var{width} ... memory access bit size, can be 8, 16, 32 or 64
+@item @var{count} ... number of elements to read
+@item ['phys'] ... treat the memory address as physical instead of virtual address
+@end itemize
+
+For example, the following command reads two 32 bit words from the target
+memory at address 0x20000000:
+
+@example
+read_memory 0x20000000 32 2
+@end example
+@end deffn
+
 @deffn {Command} {halt} [ms]
 @deffnx {Command} {wait_halt} [ms]
 The @command{halt} command first sends a halt request to the target,
@@ -8556,8 +8781,8 @@ When the current target has an MMU which is present and active,
 Otherwise, or if the optional @var{phys} flag is specified,
 @var{addr} is interpreted as a physical address.
 If @var{count} is specified, displays that many units.
-(If you want to manipulate the data instead of displaying it,
-see the @code{mem2array} primitives.)
+(If you want to process the data instead of displaying it,
+see the @code{read_memory} primitives.)
 @end deffn
 
 @deffn {Command} {mwd} [phys] addr doubleword [count]
@@ -8611,7 +8836,7 @@ In addition the following arguments may be specified:
 proc load_image_bin @{fname foffset address length @} @{
     # Load data from fname filename at foffset offset to
     # target at address. Load at most length bytes.
-    load_image $fname [expr $address - $foffset] bin \
+    load_image $fname [expr @{$address - $foffset@}] bin \
                $address $length
 @}
 @end example
@@ -9177,6 +9402,17 @@ requests by using a special SVC instruction that is trapped at the
 Supervisor Call vector by OpenOCD.
 @end deffn
 
+@deffn {Command} {arm semihosting_redirect} (@option{disable} | @option{tcp} <port>
+[@option{debug}|@option{stdio}|@option{all})
+@cindex ARM semihosting
+Redirect semihosting messages to a specified TCP port.
+
+This command redirects debug (READC, WRITEC and WRITE0) and stdio (READ, WRITE)
+semihosting operations to the specified TCP port.
+The command allows to select which type of operations to redirect (debug, stdio, all (default)).
+Note: for stdio operations, only I/O from/to ':tt' file descriptors are redirected.
+@end deffn
+
 @deffn {Command} {arm semihosting_cmdline} [@option{enable}|@option{disable}]
 @cindex ARM semihosting
 Set the command line to be passed to the debugger.
@@ -9224,6 +9460,17 @@ request or equivalent").
 
 To make the SEMIHOSTING_SYS_EXIT call return normally, enable
 this option (default: disabled).
+@end deffn
+
+@deffn {Command} {arm semihosting_read_user_param}
+@cindex ARM semihosting
+Read parameter of the semihosting call from the target. Usable in
+semihosting-user-cmd-0x10* event handlers, returning a string.
+
+When the target makes semihosting call with operation number from range 0x100-
+0x107, an optional string parameter can be passed to the server. This parameter
+is valid during the run of the event handlers and is accessible with this
+command.
 @end deffn
 
 @section ARMv4 and ARMv5 Architecture
@@ -10409,6 +10656,18 @@ tunneled DR scan consists of:
 
 @end deffn
 
+@deffn {Command} {riscv set_bscan_tunnel_ir} value
+Allows the use_bscan_tunnel feature to target non Xilinx device by
+specifying the JTAG TAP IR used to access the bscan tunnel.
+@end deffn
+
+@deffn {Command} {riscv set_maskisr} [@option{off}|@option{steponly}]
+Selects whether interrupts will be disabled when single stepping. The default configuration is @option{off}.
+This feature is only useful on hardware that always steps into interrupts and doesn't support dcsr.stepie=0.
+Keep in mind, disabling the option does not guarantee that single stepping will go into interrupt handlers.
+To make that happen, dcsr.stepie would have to be written to 1 as well.
+@end deffn
+
 @deffn {Command} {riscv set_ebreakm} on|off
 Control dcsr.ebreakm. When on (default), M-mode ebreak instructions trap to
 OpenOCD. When off, they generate a breakpoint exception handled internally.
@@ -10431,7 +10690,7 @@ trivial challenge-response protocol could be implemented as follows in a
 configuration file, immediately following @command{init}:
 @example
 set challenge [riscv authdata_read]
-riscv authdata_write [expr $challenge + 1]
+riscv authdata_write [expr @{$challenge + 1@}]
 @end example
 
 @deffn {Command} {riscv authdata_read} [index=0]
@@ -11494,13 +11753,7 @@ should be passed in to the proc in question.
 By "low-level", we mean commands that a human would typically not
 invoke directly.
 
-@itemize @bullet
-@item @b{mem2array} <@var{varname}> <@var{width}> <@var{addr}> <@var{nelems}>
-
-Read memory and return as a Tcl array for script processing
-@item @b{array2mem} <@var{varname}> <@var{width}> <@var{addr}> <@var{nelems}>
-
-Convert a Tcl array to memory locations and write the values
+@itemize
 @item @b{flash banks} <@var{driver}> <@var{base}> <@var{size}> <@var{chip_width}> <@var{bus_width}> <@var{target}> [@option{driver options} ...]
 
 Return information about the flash banks
@@ -12142,7 +12395,7 @@ it reads a file and executes as a script.
 @example
     set x 6
     set y 7
-    puts [format "The answer: %d" [expr $x * $y]]
+    puts [format "The answer: %d" [expr @{$x * $y@}]]
 @end example
 @enumerate
 @item The SET command creates 2 variables, X and Y.
@@ -12213,13 +12466,13 @@ proc myproc @{ @} @{
 @b{Dynamic variable creation}
 @example
 # Dynamically create a bunch of variables.
-for @{ set x 0 @} @{ $x < 32 @} @{ set x [expr $x + 1]@} @{
+for @{ set x 0 @} @{ $x < 32 @} @{ set x [expr @{$x + 1@}]@} @{
     # Create var name
     set vn [format "BIT%d" $x]
     # Make it a global
     global $vn
     # Set it.
-    set $vn [expr (1 << $x)]
+    set $vn [expr @{1 << $x@}]
 @}
 @end example
 @b{Dynamic proc/command creation}
