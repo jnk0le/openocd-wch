@@ -263,7 +263,8 @@ static void add_default_dirs(void)
 		free(path);
 	}
 
-	path = alloc_printf("%s/%s/%s", exepath, bin2data, "scripts");
+	//path = alloc_printf("%s/%s/%s", exepath, bin2data, "scripts");
+	path = alloc_printf("%s/%s/%s", exepath, "../", "scripts");
 	if (path) {
 		add_script_search_dir(path);
 		free(path);
