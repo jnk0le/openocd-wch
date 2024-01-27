@@ -1,4 +1,3 @@
-
 /***************************************************************************
  *   Copyright (C) 2021 by Adrian Negreanu                                 *
  *   groleo@gmail.com                                                      *
@@ -271,9 +270,8 @@ static int queued_retval;
 
 static uint8_t output_pins = SWJ_PIN_SRST | SWJ_PIN_TRST;
 
- struct cmsis_dap *cmsis_dap_handle;
+static struct cmsis_dap *cmsis_dap_handle;
 
-extern void wlink_armversion(struct cmsis_dap *wdap);
 
 static int cmsis_dap_quit(void);
 
@@ -310,10 +308,8 @@ static int cmsis_dap_open(void)
 	}
 
 	dap->backend = backend;
-	cmsis_dap_handle = dap;
 
-   wlink_armversion(dap);
- 
+	cmsis_dap_handle = dap;
 
 	return ERROR_OK;
 }
