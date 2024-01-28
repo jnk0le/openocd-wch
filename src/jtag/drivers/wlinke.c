@@ -1882,6 +1882,9 @@ int wlink_speed(int speed ){
 	pReadData(0, 1, rxbuf, &len);
 	if (((rxbuf[0] == 0x82) && (rxbuf[1] == 0x0c) && (rxbuf[2] == 0x01) && (rxbuf[3] == 0x01)))
 		return ERROR_OK;
+	
+	LOG_ERROR("response error while setting wlink speed, your adapter firmware is likely outdated");
+	LOG_ERROR("v2.7 is known to fail here, v2.11 is known to work");
 	return ERROR_FAIL;
 }
 
