@@ -25,7 +25,7 @@
 #include <arpa/inet.h>
 #endif
 #include "cmsis_dap.h"
-#ifdef _WIN32
+#if 0
 #include <windows.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -65,7 +65,7 @@ pCH375WriteEndP pWriteData;
 #include <sys/types.h>
 #include <fcntl.h>
 #include <string.h>
-#include <sys/ioctl.h>
+//#include <sys/ioctl.h>
 #include <stdint.h>
 int gIndex = 0;
 static const uint16_t wlink_vids[] = {0x1a86, 0};
@@ -1429,7 +1429,7 @@ int wlink_init(void)
 	txbuf[2] = 0x01;
 	txbuf[3] = 0x01;
 
-#ifdef _WIN32
+#if 0
 	OSVERSIONINFO version;
 
 	version.dwOSVersionInfoSize = sizeof version;
@@ -1467,7 +1467,7 @@ int wlink_init(void)
 			pSetTimeout(gIndex, 5000, 5000);
 		}
 	}
-#else if
+#else
 
 	if (jtag_libusb_open(wlink_vids, wlink_pids, &wfd, NULL) != ERROR_OK)
 	{
@@ -1698,7 +1698,7 @@ int wlink_init(void)
 			LOG_ERROR(" communication fail,please contact [support@mounriver.com]");
 			goto error_wlink;
 		}
-#ifdef _WIN32
+#if 0
 		gOpen = TRUE;
 #endif
 	}
@@ -1729,7 +1729,7 @@ int wlink_init(void)
 		}
 
 	return ERROR_OK;
-#ifdef _WIN32
+#if 0
 error_wlink:
 
 	wlink_endprocess();
@@ -1754,7 +1754,7 @@ error_wlink:
 
 int wlink_quit(void)
 {
-#ifdef _WIN32
+#if 0
 	if (gOpen)
 	{
 		wlink_endprocess();
@@ -1766,7 +1766,7 @@ int wlink_quit(void)
 		FreeLibrary(hModule);
 		hModule = 0;
 	}
-#else if
+#else
 	wlink_endprocess();
 	jtag_libusb_close(wfd);
 #endif
