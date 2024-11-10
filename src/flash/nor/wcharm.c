@@ -405,12 +405,17 @@ static int ch32x_write_options(struct flash_bank *bank)
 	if (retval != ERROR_OK)
 		return retval;
 
+	LOG_ERROR("options uninitialized content: %hx, %hx, %hx, %hx, %hx, %hx, %hx, %hx", pbuf[0],pbuf[1],pbuf[2],pbuf[3],pbuf[4],pbuf[5],pbuf[6],pbuf[7]);
+
 	/* program option bytes */
 	for(int i=0;i<8;i++){
 		retval = target_read_u16(target, ch32_OB_RDP+ 16*i , &pbuf[i]);
 		if (retval != ERROR_OK)
 			return retval;
 	}
+	
+	LOG_ERROR("options read content ([0] is overwritten): %hx, %hx, %hx, %hx, %hx, %hx, %hx, %hx", pbuf[0],pbuf[1],pbuf[2],pbuf[3],pbuf[4],pbuf[5],pbuf[6],pbuf[7]);
+	
 	if(ch32x_info->option_bytes.protection)
 		pbuf[0]=0x5aa5;
 	else
