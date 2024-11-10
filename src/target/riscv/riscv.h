@@ -412,4 +412,6 @@ int riscv_write_by_any_size(struct target *target, target_addr_t address, uint32
 int riscv_interrupts_disable(struct target *target, uint64_t ie_mask, uint64_t *old_mstatus);
 int riscv_interrupts_restore(struct target *target, uint64_t old_mstatus);
 
+int set_debug_reason(struct target *target, enum riscv_halt_reason halt_reason);
+
 #endif

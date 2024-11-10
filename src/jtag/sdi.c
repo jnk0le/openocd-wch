@@ -22,11 +22,6 @@ int transfer(unsigned long iIndex, unsigned char iAddr,unsigned long iData,unsig
 	return adapter_driver->sdi_ops->transfer(iIndex,iAddr,iData,iOP,oAddr,oData,oOP);
 }
 
-
-
-
-
-
 COMMAND_HANDLER(handle_sdi_newtap_command)
 {
 	struct jtag_tap *tap;

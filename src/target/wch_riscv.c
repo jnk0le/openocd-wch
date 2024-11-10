@@ -14,7 +14,7 @@
 #include <target/algorithm.h>
 #include <target/target_type.h>
 #include <target/smp.h>
-#include  <target/register.h>
+#include <target/register.h>
 #include <target/breakpoints.h>
 #include <helper/base64.h>
 #include <helper/time_support.h>
@@ -585,9 +585,6 @@ int wch_riscv_remove_breakpoint(struct target *target,
 		struct breakpoint *breakpoint)
 {
 	if (breakpoint->type == BKPT_SOFT) {
-		uint8_t buf[32];
-		
-
 		/* Write the original instruction. */
 		if (wch_riscv_write_by_any_size(
 				target, breakpoint->address, breakpoint->length, breakpoint->orig_instr) != ERROR_OK) {
@@ -656,6 +653,9 @@ int wch_riscv_remove_watchpoint(struct target *target,
 	return ERROR_OK;
 }
 
+#if (1)
+// Unused functions
+#else
 /**
  * Look at the trigger hit bits to find out which trigger is the reason we're
  * halted.  Sets *unique_id to the unique ID of that trigger. If *unique_id is
@@ -716,7 +716,7 @@ static int riscv_hit_trigger_hit_bit(struct target *target, uint32_t *unique_id)
 
 	return ERROR_OK;
 }
-
+#endif
 
 
 static int oldriscv_step(struct target *target, int current, uint32_t address,
@@ -725,6 +725,9 @@ static int oldriscv_step(struct target *target, int current, uint32_t address,
 	struct target_type *tt = get_target_type(target);
 	return tt->step(target, current, address, handle_breakpoints);
 }
+
+int wch_riscv_openocd_step(struct target *target, int current,
+	target_addr_t address, int handle_breakpoints);
 
 static int old_or_new_riscv_step(struct target *target, int current,
 		target_addr_t address, int handle_breakpoints)
@@ -1655,12 +1658,13 @@ static int riscv_checksum_memory(struct target *target,
 
 /*** OpenOCD Helper Functions ***/
 
- static enum riscv_poll_hart {
+ enum riscv_poll_hart {
 	RPH_NO_CHANGE,
 	RPH_DISCOVERED_HALTED,
 	RPH_DISCOVERED_RUNNING,
 	RPH_ERROR
 };
+
 static enum riscv_poll_hart riscv_poll_hart(struct target *target, int hartid)
 {
 	RISCV_INFO(r);
@@ -2877,9 +2881,9 @@ static int riscv_resume_go_all_harts(struct target *target)
 }
 
 
-
-
-
+#if (1)
+// Unused functions
+#else
 /**
  * If write is true:
  *   return true iff we are guaranteed that the register will contain exactly
@@ -2928,8 +2932,6 @@ static bool gdb_regno_cacheable(enum gdb_regno regno, bool write)
 			return false;
 	}
 }
-
-
 
 static int register_get(struct reg *reg)
 {
@@ -3008,23 +3010,27 @@ static int register_set(struct reg *reg, uint8_t *buf)
 
 	return ERROR_OK;
 }
+#endif
 
+#if (1)
+// Unused object
+#else
 static struct reg_arch_type riscv_reg_arch_type = {
 	.get = register_get,
 	.set = register_set
 };
+#endif
 
-static struct csr_info {
+struct csr_info {
 	unsigned number;
 	const char *name;
 };
 
+#if (1)
+// Unused function
+#else
 static int cmp_csr_info(const void *p1, const void *p2)
 {
 	return (int) (((struct csr_info *)p1)->number) - (int) (((struct csr_info *)p2)->number);
 }
-
- 
-
-
-
+#endif
