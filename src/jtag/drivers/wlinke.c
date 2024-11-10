@@ -67,37 +67,41 @@ pCH375WriteEndP pWriteData;
 #include <string.h>
 //#include <sys/ioctl.h>
 #include <stdint.h>
-int gIndex = 0;
+static unsigned int gIndex = 0;
 static const uint16_t wlink_vids[] = {0x1a86, 0};
 static const uint16_t wlink_pids[] = {0x8010, 0};
-struct jtag_libusb_device_handle *wfd = NULL;
+struct libusb_device_handle *wfd = NULL;
+
 int pWriteData(int dev, int endpoint, unsigned char *buf, unsigned long *length)
 {
 	int ret, pr;
-	length = (int *)length;
-	ret = jtag_libusb_bulk_write(wfd, endpoint, buf, *length, 3000, &pr);
+
+	ret = jtag_libusb_bulk_write(wfd, endpoint, (char *)buf, *length, 3000, &pr);
 	if (ret == ERROR_OK)
 		return 1;
 	else
 		return ret;
 }
+
 int pReadData(int dev, int endpoint, unsigned char *buf, unsigned long *length)
 {
 	int ret, pr;
-	length = (int *)length;
+
 	if (endpoint == 1)
 	{
-		ret = jtag_libusb_bulk_read(wfd, 0x81, buf, *length, 3000, &pr);
+		ret = jtag_libusb_bulk_read(wfd, 0x81, (char *)buf, *length, 3000, &pr);
 	}
 	else
 	{
-		ret = jtag_libusb_bulk_read(wfd, 0x82, buf, *length, 3000, &pr);
+		ret = jtag_libusb_bulk_read(wfd, 0x82, (char *)buf, *length, 3000, &pr);
 	}
+
 	if (ret == ERROR_OK)
 		return 1;
 	else
 		return ret;
 }
+
 #endif
 unsigned long wlink_address = 0;
 bool wlink549 = false;
@@ -886,7 +890,8 @@ void wlink_getromram(uint32_t *rom, uint32_t *ram)
 		break;
 	}
 }
-void readmcause();
+
+void readmcause(void);
 unsigned char DMI_OP(
 	unsigned long iIndex,
 	unsigned char iAddr,
@@ -911,7 +916,7 @@ unsigned char DMI_OP(
 	Txbuf[7] = (unsigned char)(iData);
 	Txbuf[8] = iOP;
 	retrytime = 0;
-RETRY:
+
 	len = 9;
 	if (pWriteData(gIndex, 1, Txbuf, &len))
 	{
@@ -942,10 +947,11 @@ RETRY:
 			return true;
 		}
 	}
+
 	return false;
 }
 
-void wlink_reset()
+void wlink_reset(void)
 {
 	unsigned char txbuf[4];
 	unsigned char rxbuf[4];
@@ -1051,7 +1057,7 @@ void wlink_clean(void){
 	pReadData(0, 1, rxbuf, &len);
 }
 
-void wlink_chip_reset()
+void wlink_chip_reset(void)
 {
 	unsigned char txbuf[4];
 	unsigned char rxbuf[4];
@@ -1808,7 +1814,7 @@ int wlink_write(const uint8_t *buffer, uint32_t offset, uint32_t count)
 
 	if (binlength <= packsize)
 	{
-		for (int i = 0; i < count; i++)
+		for (size_t i = 0; i < count; i++)
 		{
 			buf_bin[i] = *(buffer + i);
 		}

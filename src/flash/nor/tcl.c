@@ -406,7 +406,6 @@ COMMAND_HANDLER(handle_flash_protect_check_command){
 	
 	struct flash_bank *p;
 	int retval;
-	int num_blocks;
 
 	retval = CALL_COMMAND_HANDLER(flash_command_get_bank, 0, &p);
 	if (retval != ERROR_OK)
@@ -415,7 +414,7 @@ COMMAND_HANDLER(handle_flash_protect_check_command){
 		if(riscvchip==1)
 			wlink_softreset();
 		if((riscvchip==1)||(riscvchip==5)||(riscvchip==6)||(riscvchip==9)||(riscvchip==0x0c)||(riscvchip==0x0e)){
-			int retval=wlnik_protect_check();
+			retval=wlnik_protect_check();
 			if(retval==4)
 				LOG_INFO("Code Read-Protect Status Enable");
 			else

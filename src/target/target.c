@@ -3355,11 +3355,12 @@ COMMAND_HANDLER(handle_reset_command)
 	/* reset *all* targets */
 	return target_process_reset(CMD, reset_mode);
 }
+
 extern void wlink_softreset(void);
 COMMAND_HANDLER(handle_wlink_reset_resume_command)
-{
-	
+{	
 	wlink_softreset();
+	return 0;
 }
 
 COMMAND_HANDLER(handle_resume_command)

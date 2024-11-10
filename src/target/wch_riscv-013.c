@@ -335,7 +335,8 @@ static int dmi_op_timeout(struct target *target, uint32_t *data_in,
 	dmi_status_t status;
 	uint32_t address_in;
 	uint8_t	recvOP;
-	uint32_t recvData;
+	unsigned long recvData;
+
 	if (dmi_busy_encountered)
 		*dmi_busy_encountered = false;
 	
@@ -362,7 +363,7 @@ static int dmi_op_timeout(struct target *target, uint32_t *data_in,
 	while (1) {
 		if(dmi_op == DMI_OP_READ)
 		{
-			result=transfer(0, (unsigned char	)address, 0, (unsigned char	)dmi_op, &address_in, data_in,&recvOP);
+			result=transfer(0, (unsigned char	)address, 0, (unsigned char	)dmi_op, (unsigned char *)&address_in, (unsigned long *)data_in, &recvOP);
 			if(!result){
 					LOG_ERROR("failed %s at 0x%x, status=%d", op_name, address, status);
 					LOG_ERROR("Maybe the device has been removed");
@@ -370,13 +371,13 @@ static int dmi_op_timeout(struct target *target, uint32_t *data_in,
 					return ERROR_FAIL;
 				}		
 		}else{
-			transfer(0, (unsigned char	)address, data_out, (unsigned char	)dmi_op, &address_in, &recvData,&recvOP);
+			transfer(0, (unsigned char	)address, data_out, (unsigned char	)dmi_op, (unsigned char *)&address_in, &recvData, &recvOP);
 		}
 		status = recvOP;
 		if (status == DMI_STATUS_BUSY) {
 			if (dmi_busy_encountered)
 				*dmi_busy_encountered = true;
-			transfer(0, (unsigned char	)DM_ABSTRACTCS, DM_ABSTRACTCS_CMDERR, (unsigned char	)DMI_OP_WRITE, &address_in, &recvData,&recvOP);
+			transfer(0, (unsigned char	)DM_ABSTRACTCS, DM_ABSTRACTCS_CMDERR, (unsigned char	)DMI_OP_WRITE, (unsigned char *)&address_in, &recvData, &recvOP);
 		} else if (status == DMI_STATUS_SUCCESS) {
 			break;
 		} else {
@@ -476,6 +477,9 @@ static void increase_ac_busy_delay(struct target *target)
 			info->ac_busy_delay);
 }
 
+#if (1)
+/* Unused function */
+#else
 static uint32_t abstract_register_size(unsigned width)
 {
 	switch (width) {
@@ -490,6 +494,7 @@ static uint32_t abstract_register_size(unsigned width)
 			return 0;
 	}
 }
+#endif
 
 static int wait_for_idle(struct target *target, uint32_t *abstractcs)
 {
@@ -1782,6 +1787,9 @@ static int riscv013_set_register_buf(struct target *target,
 	return result;
 }
 
+#if (1)
+/* Unused functions */
+#else
 static uint32_t sb_sbaccess(unsigned int size_bytes)
 {
 	switch (size_bytes) {
@@ -1815,6 +1823,7 @@ static int sb_write_address(struct target *target, target_addr_t address,
 	return dmi_op(target, NULL, NULL, DMI_OP_WRITE, DM_SBADDRESS0, address,
 				  false, ensure_success);
 }
+#endif
 
 static int batch_run(const struct target *target, struct riscv_batch *batch)
 {
@@ -1850,6 +1859,9 @@ static int sba_supports_access(struct target *target, unsigned int size_bytes)
 	}
 }
 
+#if (1)
+/* Unused functions */
+#else
 static int sample_memory_bus_v1(struct target *target,
 								struct riscv_sample_buf *buf,
 								const riscv_sample_config_t *config,
@@ -1997,6 +2009,7 @@ static int sample_memory(struct target *target,
 
 	return sample_memory_bus_v1(target, buf, config, until_ms);
 }
+#endif
 
 static int init_target(struct command_context *cmd_ctx,
 		struct target *target)
@@ -2130,7 +2143,6 @@ static int deassert_reset(struct target *target)
 
 	uint32_t dmstatus;
 	int dmi_busy_delay = info->dmi_busy_delay;
-	time_t start = time(NULL);
 
 	for (unsigned int i = 0; i < riscv_count_harts(target); ++i) {
 		unsigned int index = i;
@@ -2179,7 +2191,7 @@ static int deassert_reset(struct target *target)
 		LOG_DEBUG("[wch] dcsr read fail!");
 	}
 	else{
-		LOG_DEBUG("[wch] read dcsr value is 0x%x", tmpDcsr);
+		LOG_DEBUG("[wch] read dcsr value is 0x%" PRIx64, tmpDcsr);
 		//enable ebreak in m&u mode
 		tmpDcsr = set_field(tmpDcsr, CSR_DCSR_EBREAKM, 1);
 		tmpDcsr = set_field(tmpDcsr, CSR_DCSR_EBREAKU, 1);		
@@ -2241,6 +2253,9 @@ static void log_memory_access(target_addr_t address, uint64_t value,
 	LOG_DEBUG(fmt, value);
 }
 
+#if (1)
+/* Unused function */
+#else
 /* Read the relevant sbdata regs depending on size, and put the results into
  * buffer. */
 static int read_memory_bus_word(struct target *target, target_addr_t address,
@@ -2259,6 +2274,7 @@ static int read_memory_bus_word(struct target *target, target_addr_t address,
 	}
 	return ERROR_OK;
 }
+#endif
 
 static target_addr_t sb_read_address(struct target *target)
 {
